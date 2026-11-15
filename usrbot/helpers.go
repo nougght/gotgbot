@@ -2,10 +2,15 @@ package usrbot
 
 import (
 	"context"
+	"gotgbot/model"
 	"log"
+	"slices"
+	"time"
 
+	"github.com/gotd/contrib/storage"
 	"github.com/gotd/td/telegram/query"
 	"github.com/gotd/td/tg"
+	"golang.org/x/time/rate"
 )
 
 type (
@@ -15,8 +20,9 @@ type (
 		channels []*tg.InputPeerChannel
 	}
 )
+
 func (d *dialogsList) AllTypes() []tg.InputPeerClass {
-	res := make([]tg.InputPeerClass, 0, len(d.users) + len(d.chats) + len(d.channels))
+	res := make([]tg.InputPeerClass, 0, len(d.users)+len(d.chats)+len(d.channels))
 	for _, user := range d.users {
 		res = append(res, user)
 	}
@@ -58,6 +64,56 @@ func GetDialogs(ctx context.Context, client *tg.Client) (res *dialogsList, err e
 	return res, err
 }
 
-func GetDialogMessages(ctx context.Context, client *tg.Client, list dialogsList) {
-	for query.Messages(client).GetHistory(list.users[0])
+func (b *UsrBot) SaveMessagesByPeers(ctx context.Context, client *tg.Client, peers []tg.InputPeerClass) error {
+	ctx = context.Background()
+	go func() {
+		time.Sleep(time.Second)
+		res := make([]*model.Message, 0, 1000)
+		rl := rate.NewLimiter(rate.Every(time.Second), 1)
+		for _, peer := range peers {
+			q := query.Messages(client)
+			it := q.GetHistory(peer).BatchSize(100).Iter()
+			batchLen, err := it.Total(ctx)
+			if err != nil {
+				log.Printf("failed to get msgs total: %s", err.Error())
+				continue
+			}
+			res = slices.Grow(res, len(res)+batchLen)
+			for it.Next(ctx) {
+				msg := it.Value().Msg
+				switch m := msg.(type) {
+				case *tg.Message:
+					res = append(res, model.NewMessageFromTg(m, b.config.Phone))
+				case *tg.MessageService:
+					// TODO: add service msgs
+				}
+				if len(res) >= 100 {
+					log.Printf("saving msgs batch of peer: %#v", peer)
+					log.Printf("messages len: %d", len(res))
+					err = b.repo.MessagesRepo.BatchAddMessages(ctx, res)
+					if err != nil {
+						log.Printf("failed to save msgs batch of peer: %s", err.Error())
+					}
+					rl.Wait(ctx)
+					res = res[:0]
+				}
+			}
+			if err := it.Err(); err != nil {
+				log.Printf("failed to iterate msgs: %s", err.Error())
+				continue
+			}
+			time.Sleep(100 * time.Millisecond)
+			log.Printf("iterated %d messages of peer %v", batchLen, peer)
+		}
+	}()
+	return nil
+}
+
+// FindPeer finds peer using given storage
+func FindPeer(ctx context.Context, s storage.PeerStorage, key model.PeerKey) (storage.Peer, error) {
+
+	return s.Find(ctx, storage.PeerKey{
+		Kind: key.Kind,
+		ID:   key.ID,
+	})
 }
