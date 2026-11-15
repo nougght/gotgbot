@@ -2,7 +2,10 @@ package usrbot
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"gotgbot/model"
+	"gotgbot/repository"
 	"log"
 	"slices"
 	"time"
@@ -19,7 +22,18 @@ type (
 		chats    []*tg.InputPeerChat
 		channels []*tg.InputPeerChannel
 	}
+	peerFinder struct {
+		store storage.PeerStorage
+	}
 )
+
+func (b *UsrBot) FindUserByID(ctx context.Context, id int64) (*tg.User, error) {
+	peer, err := storage.FindPeer(ctx, b.peerDB, &tg.PeerUser{UserID: id})
+	if err != nil {
+		return nil, fmt.Errorf("failed find user by id: %w", err)
+	}
+	return peer.User, nil
+}
 
 func (d *dialogsList) AllTypes() []tg.InputPeerClass {
 	res := make([]tg.InputPeerClass, 0, len(d.users)+len(d.chats)+len(d.channels))
@@ -29,9 +43,9 @@ func (d *dialogsList) AllTypes() []tg.InputPeerClass {
 	for _, chat := range d.chats {
 		res = append(res, chat)
 	}
-	for _, channel := range d.channels {
-		res = append(res, channel)
-	}
+	//for _, channel := range d.channels {
+	//	res = append(res, channel)
+	//}
 	return res
 }
 
@@ -91,22 +105,47 @@ func (b *UsrBot) SaveMessagesByPeers(ctx context.Context, client *tg.Client, pee
 					log.Printf("saving msgs batch of peer: %#v", peer)
 					log.Printf("messages len: %d", len(res))
 					err = b.repo.MessagesRepo.BatchAddMessages(ctx, res)
+					res = res[:0]
+					if errors.Is(err, repository.ErrNoAffectedRows) {
+						log.Printf("msgs already exist: %s", err.Error())
+						break
+					}
 					if err != nil {
 						log.Printf("failed to save msgs batch of peer: %s", err.Error())
 					}
 					rl.Wait(ctx)
-					res = res[:0]
 				}
 			}
 			if err := it.Err(); err != nil {
 				log.Printf("failed to iterate msgs: %s", err.Error())
 				continue
 			}
+			rl.Wait(ctx)
 			time.Sleep(100 * time.Millisecond)
 			log.Printf("iterated %d messages of peer %v", batchLen, peer)
 		}
+		// save remaining msgs
+		if len(res) > 0 {
+			err := b.repo.MessagesRepo.BatchAddMessages(ctx, res)
+			res = res[:0]
+			if errors.Is(err, repository.ErrNoAffectedRows) {
+				log.Printf("msgs already exist: %s", err.Error())
+			}
+			if err != nil {
+				log.Printf("failed to save msgs batch of peer: %s", err.Error())
+			}
+		}
+		log.Println("finish save messages by peers")
 	}()
 	return nil
+}
+
+func (b *UsrBot) ListUserMsgs(ctx context.Context, userID int64, limit, offset int64) ([]*model.Message, error) {
+	msgs, err := b.repo.MessagesRepo.GetPeerMessages(ctx, b.config.Phone, model.PeerTypeUser, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return msgs, nil
 }
 
 // FindPeer finds peer using given storage

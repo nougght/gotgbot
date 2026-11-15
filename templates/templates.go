@@ -1,10 +1,11 @@
-package usrbot
+package templates
 
 import (
 	"bytes"
 	"fmt"
 	"gotgbot/model"
 
+	htmp "html/template"
 	"text/template"
 
 	"github.com/gotd/contrib/storage"
@@ -25,6 +26,17 @@ var (
 				"{{end}}" +
 				"{{end}}"),
 	)
+	TemplateListMessages = htmp.Must(
+		htmp.New("listMessages").
+			Parse("Сообщения в чате @{{.Username}}\n\n" +
+				"{{range .Messages}}" +
+				"{{.Date}}\n" +
+				"{{if .DeletedAt}}🔴 {{end}}" +
+				"{{if .Out}}🟢 {{else}}🔵 от @{{$.Username}}\n{{end}}" +
+				"<blockquote expandable>" +
+				"\"{{.Content}}\"</blockquote>\n\n" +
+				"{{end}}"),
+	)
 )
 
 func DeletedMessagesTemplate(msgs map[dialogs.DialogKey][]*model.Message, peers []*storage.Peer) (string, error) {
@@ -38,6 +50,22 @@ func DeletedMessagesTemplate(msgs map[dialogs.DialogKey][]*model.Message, peers 
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to execute deleted messages template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+func ListMessagesTemplate(username string, msgs []*model.Message) (string, error) {
+	buf := bytes.NewBuffer(nil)
+	err := TemplateListMessages.Execute(buf, struct {
+		Messages []*model.Message
+		Username string
+	}{
+		Messages: msgs,
+		Username: username,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to execute list messages template: %w", err)
 	}
 
 	return buf.String(), nil

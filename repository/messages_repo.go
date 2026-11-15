@@ -7,6 +7,7 @@ import (
 	"gotgbot/model"
 	database "gotgbot/repository/db"
 	"log"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -70,15 +71,20 @@ func (s *MessagesRepo) GetNonChannelMsg(ctx context.Context, phone string, msgID
 	return res, nil
 }
 
-func (s *MessagesRepo) GetPeerMessages(ctx context.Context, phone string, peerType int, peerID int64) (res []*model.Message, err error) {
+func (s *MessagesRepo) GetPeerMessages(ctx context.Context, phone string, peerType int, peerID int64, limit, offset int64) (res []*model.Message, err error) {
 	query := `
 		SELECT * FROM messages 
 		WHERE phone = $1
 		AND peer_type = $2
-		AND peer_id = $3;
+		AND peer_id = $3
+		ORDER BY date DESC
+		LIMIT $4 OFFSET $5;
 		`
+	if limit == 0 {
+		limit = 20
+	}
 
-	rows, err := s.db.Query(ctx, query, phone, peerType, peerID)
+	rows, err := s.db.Query(ctx, query, phone, peerType, peerID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -173,8 +179,31 @@ func (s *MessagesRepo) BatchAddMessages(ctx context.Context, msgs []*model.Messa
 		return fmt.Errorf("failed to batch add msg: %w", err)
 	}
 
+	if res.RowsAffected() == 0 {
+		return ErrNoAffectedRows
+	}
 	if res.RowsAffected() != int64(len(msgs)) {
 		log.Printf("not equal batch size: %d != %d", res.RowsAffected(), int64(len(msgs)))
+	}
+	return nil
+}
+
+func (s *MessagesRepo) MarkDeletedMessage(ctx context.Context, phone string, key model.PeerKey, msgID int) (err error) {
+	query := `
+	UPDATE messages
+	SET deleted_at = $1
+	WHERE phone = $2
+	AND peer_type = $3
+	AND peer_id = $4
+	AND msg_id = $5
+	`
+	res, err := s.db.Exec(ctx, query, time.Now(), phone, int(key.Kind), key.ID, msgID)
+	if err != nil {
+		return fmt.Errorf("failed to mark msg as deleted: %w", err)
+	}
+
+	if res.RowsAffected() == 0 {
+		return ErrNoAffectedRows
 	}
 	return nil
 }

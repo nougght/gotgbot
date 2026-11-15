@@ -2,8 +2,11 @@ package usrbot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"gotgbot/model"
+	"gotgbot/repository"
+	"gotgbot/templates"
 	"log"
 	"maps"
 	"slices"
@@ -71,7 +74,14 @@ func (b *UsrBot) DeleteMessagesHandler(ctx context.Context, e tg.Entities, updat
 				log.Printf("failed to find peer: %s", err)
 				continue
 			}
-			pkey = model.PeerKey(p.Key)
+			err = b.repo.MessagesRepo.MarkDeletedMessage(ctx, b.config.Phone, pkey, msg.MsgID)
+			if errors.Is(err, repository.ErrNoAffectedRows) {
+				log.Printf("not found to mark deleted message: %s", err.Error())
+			}
+			if err != nil {
+				log.Printf("failed to mark deleted message: %s", err.Error())
+			}
+
 			peers[pkey] = &p
 			_, ok := msgs[dialogs.DialogKey(pkey)]
 			if !ok {
@@ -82,7 +92,7 @@ func (b *UsrBot) DeleteMessagesHandler(ctx context.Context, e tg.Entities, updat
 		}
 		log.Printf("peers: %+v", peers)
 		log.Printf("msgs: %+v", msgs)
-		msgToSend, err := DeletedMessagesTemplate(msgs, slices.Collect(maps.Values(peers)))
+		msgToSend, err := templates.DeletedMessagesTemplate(msgs, slices.Collect(maps.Values(peers)))
 		if err != nil {
 			log.Println(err.Error())
 			return

@@ -34,7 +34,7 @@ func main() {
 
 	repo := repository.NewRepository(db, config)
 
-	bot, err := bot.NewTgBot(config)
+	bot, err := bot.NewTgBot(config, repo)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
@@ -54,6 +54,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("usrbot init failed: %s", err.Error())
 	}
+	bot.SetProvider(usr)
 
 	err = usr.Start(rootCtx)
 	if err != nil {
